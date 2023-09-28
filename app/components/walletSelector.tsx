@@ -1,6 +1,6 @@
 "use client";
 
-import { WalletReadyState, useWallet } from "@aptos-labs/wallet-adapter-react";
+import { WalletName, WalletReadyState, useWallet } from "@aptos-labs/wallet-adapter-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,6 +60,26 @@ export default function WalletSelector(props: { isTxnInProgress?: boolean }) {
             an object that contains `error_code` of `account_not_found`, call the initializeAccount
             function to initialize the account.
     */
+    return getAccountData();
+
+  }
+
+  const getAccountData = async () => {
+    // Making the API request
+    const response = await fetch (
+      `https://fullnode.testnet.aptoslabs.com/v1/accounts/${account?.address}`,
+      {
+        method: 'GET'
+      }
+    );
+    // Parsing the response into a json
+    const accountData = await response.json();
+    // If the response is the error code for account not found, the account has not been initialized
+    if (accountData.error_code == 'account_not_found') {
+      return initializeAccount();
+    } else {
+      return accountData;
+    }
   }
 
   /* 
@@ -70,20 +90,32 @@ export default function WalletSelector(props: { isTxnInProgress?: boolean }) {
       TODO #6: Return if the wallet is not connected, the account is not defined, a transaction is 
       in progress, or the faucet is loading.
     */
+    if (!connected || !account || isFaucetLoading) return;
 
     /* 
       TODO #7: Set the isFaucetLoading state variable to prevent this function from being called again.
     */
+    setIsFaucetLoading(true);
 
     /* 
       TODO #8: Create a new faucet client with the testnet network and faucet url. Then, call the
       fundAccount function to fund the account with 1 APT. Catch any errors that occur. 
     */
+    const faucetClient = new FaucetClient(Network.TESTNET, "https://faucet.testnet.aptoslabs.com");
+    try {
+      /*
+        The faucet's fundAccount function takes the address of the account to fund, the amount of APT
+        to fund the account with, and the number of seconds to wait before timing out.
+      */
+      await faucetClient.fundAccount(account.address, 100000000, 1);
+    } catch (e) {
+      console.log(e);
+    }
 
     /* 
       TODO #9: Set the isFaucetLoading state variable to false. 
     */
-
+    setIsFaucetLoading(false);
   }
 
   /*
@@ -102,6 +134,40 @@ export default function WalletSelector(props: { isTxnInProgress?: boolean }) {
         - Remember to make the API request in a try/catch block. If there is an error, set the 
           balance to "0".
     */
+    const body = {
+      function:
+        "0x1::coin::balance",
+      type_arguments: ["0x1::aptos_coin::AptosCoin"],
+      arguments: [address],
+    };
+  
+    let res;
+    try {
+      res = await fetch(
+        `https://fullnode.testnet.aptoslabs.com/v1/view`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      )
+    } catch (e) {
+      setBalance("0");
+      return;
+    }
+    const data = await res.json();
+    setBalance((data / 100000000).toLocaleString());
+  };
+
+  const handleConnect = (walletName: WalletName) => {
+    connect(walletName);
+  };
+
+  const handleDisconnect = () => {
+    disconnect();
   };
 
   return (
@@ -153,6 +219,34 @@ export default function WalletSelector(props: { isTxnInProgress?: boolean }) {
                     </a>
                   </div>
                 */
+                wallets.map((wallet, index) => (
+                  <div key={index}>
+                    <h1>{wallet.name}</h1>
+                    {
+                      wallet.readyState === WalletReadyState.Installed && 
+                      (
+                        <Button 
+                          variant="secondary" 
+                          onClick={() => handleConnect(wallet.name)}
+                        >
+                          Connect
+                        </Button>
+                      )
+                    }
+                    {
+                      wallet.readyState === WalletReadyState.NotDetected && 
+                      (
+                        <a href={wallet.url} target="_blank">
+                          <Button 
+                            variant="secondary" 
+                          >
+                            Install
+                          </Button>
+                        </a>
+                      )
+                    }
+                  </div>
+                ))
               }
             </DialogHeader>
           </DialogContent>
@@ -171,6 +265,12 @@ export default function WalletSelector(props: { isTxnInProgress?: boolean }) {
             Loading...
           </Button>
         */
+          isLoading && 
+          (
+            <Button variant="secondary" disabled>
+              Loading...
+            </Button>
+          )
       }
       {
         /* 
@@ -200,6 +300,23 @@ export default function WalletSelector(props: { isTxnInProgress?: boolean }) {
             </DropdownMenu>
           </div>
         */
+        connected && account && 
+        (
+        <div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button className="font-mono">
+                {balance} | {account.address.slice(0, 5)}...{account.address.slice(-4)}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => handleDisconnect()}>
+                Disconnect
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        )
       }
     </div>
   );

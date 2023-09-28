@@ -12,7 +12,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Stream } from "@/app/payments/CreatedStreamList";
+import { Types } from "aptos";
 
+
+interface RecieverStream {
+  pending: Stream[],
+  active: Stream[],
+  completed: Stream[]
+}
 /* 
   Finds the best unit to display the stream rate in by changing the bottom of the unit from seconds
   to minutes, hours, days, etc.
@@ -98,7 +105,11 @@ export default function StreamRateIndicator() {
             Return the stream rate.
     */
     let aptPerSec = 0;
-
+    const receiverStream = await getReceiverStreams();
+    const senderStream = await getSenderStreams();
+    aptPerSec += receiverStream ? receiverStream.active.reduce((prev, curr) => prev += curr.amountAptFloat/(curr.durationMilliseconds/1000), 0) : 0;
+    aptPerSec -= senderStream ? senderStream.reduce((prev, curr) => prev += curr.amountAptFloat/(curr.durationMilliseconds/1000), 0) : 0;
+    console.log('receiverStream', receiverStream);
     return aptPerSec;
   };
 
@@ -106,11 +117,35 @@ export default function StreamRateIndicator() {
     /*
      TODO #2: Validate the account is defined before continuing. If not, return.
    */
+    if (!account) return;
 
     /*
-       TODO #3: Make a request to the view function `get_senders_streams` to retrieve the gifts sent by 
-             the user.
+      TODO #3: Make a request to the view function `get_senders_streams` to retrieve the gifts sent by 
+            the user.
     */
+    const body = {
+      function:
+        `${process.env.RESOURCE_ACCOUNT_ADDRESS}::pay_me_a_river::get_senders_streams`,
+      type_arguments: [],
+      arguments: [account.address],
+    };
+  
+    let res;
+    try {
+      res = await fetch(
+        `https://fullnode.testnet.aptoslabs.com/v1/view`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      )
+    } catch (e) {
+      return;
+    }    
 
     /* 
        TODO #4: Parse the response from the view request and create the streams array using the given 
@@ -119,19 +154,50 @@ export default function StreamRateIndicator() {
        HINT:
         - Remember to convert the amount to floating point number
     */
-    return [];
+    const data:Array<Array<string>> = await res.json();
+    return data[0].map((item: string, i: number) => ({
+      sender: account.address,
+      recipient: item,
+      startTimestampMilliseconds: parseInt(data[1][i]) * 1000,
+      durationMilliseconds: parseInt(data[2][i]) * 1000,
+      amountAptFloat: parseFloat(data[3][i])/100000000,
+      streamId: parseInt(data[4][i]),
+    }));
   };
 
-  const getReceiverStreams = async () => {
+  const getReceiverStreams = async (): Promise<RecieverStream | undefined> => {
     /*
       TODO #5: Validate the account is defined before continuing. If not, return.
     */
-
+    if (!account) return;
     /*
       TODO #6: Make a request to the view function `get_receivers_streams` to retrieve the gifts sent by 
             the user.
     */
-
+    const payload:Types.TransactionPayload = {
+      type: "entry_function_payload",
+      function:
+        `${process.env.RESOURCE_ACCOUNT_ADDRESS}::${process.env.MODULE_NAME}::get_receivers_streams`,
+      type_arguments: [],
+      arguments: [account.address],
+    };
+  
+    let res;
+    try {
+      res = await fetch(
+        `https://fullnode.testnet.aptoslabs.com/v1/view`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      )
+    } catch (e) {
+      return;
+    }   
     /* 
       TODO #7: Parse the response from the view request and create an object containing an array of 
             pending, completed, and active streams using the given data. Return the new object.
@@ -143,10 +209,33 @@ export default function StreamRateIndicator() {
         - Mark a stream as completed if the start timestamp + duration is greater than the current time
         - Mark a stream as active if it is not pending or completed
     */
+    const data:Array<Array<string>> = await res.json();
+
+    const convertIndexToObject = (itemList: Array<number>):Array<Stream> => itemList.filter(i => i !== -1).map((i: number) => ({
+      sender: data[0][i],
+      recipient: account.address,
+      startTimestampMilliseconds: parseInt(data[1][i]) * 1000,
+      durationMilliseconds: parseInt(data[2][i]) * 1000,
+      amountAptFloat: parseInt(data[3][i])/100000000,
+      streamId: parseInt(data[4][i]),
+    }));
+    const pendingIndex = data[1].map<number>((item: string, index: number) => {
+      if (parseInt(item) === 0) return index;
+      return -1
+    });
+    const completedIndex = data[1].map((item: string, index: number) => {
+      if (parseInt(item) !== 0 && (parseInt(item) * 1000) + (parseInt(data[2][index]) * 1000) < Date.now()) return index;
+      return -1;
+    });
+    const activeIndex = data[0].map((_: string, index: number) => {
+      if (pendingIndex[index] === -1 && completedIndex[index] === -1) return index;
+      return -1;
+    });
+
     return {
-      pending: [],
-      completed: [],
-      active: [],
+      pending: convertIndexToObject(pendingIndex),
+      completed: convertIndexToObject(completedIndex),
+      active: convertIndexToObject(activeIndex),
     };
   };
 

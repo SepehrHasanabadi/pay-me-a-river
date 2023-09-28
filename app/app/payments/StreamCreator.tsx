@@ -17,6 +17,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { sleep } from "@/lib/utils";
 
 /* 
   Parses the duration string and returns the duration in seconds. The duration string is in the format
@@ -63,7 +64,6 @@ export default function StreamCreator(props: {
 }) {
   // wallet state
   const { signAndSubmitTransaction } = useWallet();
-
   // form state
   const [address, setAddress] = useState<string>("");
   const [amount, setAmount] = useState("1");
@@ -81,18 +81,24 @@ export default function StreamCreator(props: {
       TODO #1: Validate the address, amount, and date are all defined before continuing. Return early 
             if any of the variables are undefined.
     */
+   if (!address || !amount && !duration) return;
 
     /* 
       TODO #2: Return early if the amount is not a number or is less than 0.
     */
+   if (Number(amount) < 0) return;
 
     /* 
       TODO #3: Set the isTxnInProgress prop to true
     */
+    props.setTxn(true);
 
     /* 
       TODO #4: Reset the address, amount, and date state variables
     */
+    setAddress("");
+    setAmount("1");
+    setDuration("");
 
     /* 
       TODO #5: Create the payload for the create_stream transaction
@@ -102,6 +108,13 @@ export default function StreamCreator(props: {
           with 8 decimal places.
         - The date is in milliseconds, but the transaction expects seconds.
     */
+    const payload:Types.TransactionPayload = {
+      type: "entry_function_payload",
+      function:
+        `${process.env.RESOURCE_ACCOUNT_ADDRESS}::${process.env.MODULE_NAME}::create_stream`,
+      type_arguments: [],
+      arguments: [address, Math.floor(Number(amount) * 100000000), parseDuration(duration)],
+    };
 
     /* 
       TODO #6: In a try/catch block, sign and submit the transaction using the signAndSubmitTransaction
@@ -129,10 +142,32 @@ export default function StreamCreator(props: {
       });
     */
 
+    try {
+      const result = await signAndSubmitTransaction(payload);
+      await sleep(parseInt(process.env.TRANSACTION_DELAY_MILLISECONDS || '0'))
+      toast({
+        title: "Stream created!",
+        description: `Stream created: to ${`${address.slice(
+          0,
+          6
+        )}...${address.slice(-4)}`} for ${amount} APT`,
+        action: (
+          <a
+            href={`https://explorer.aptoslabs.com/txn/${result.hash}?network=testnet`}
+            target="_blank"
+          >
+            <ToastAction altText="View transaction">View txn</ToastAction>
+          </a>
+        ),
+      });
+    } catch (e) {
+      props.setTxn(false);
+      return;
+    }
     /* 
       TODO #7: Set the isTxnInProgress prop to false
     */
-
+    props.setTxn(false);
   };
 
   return (

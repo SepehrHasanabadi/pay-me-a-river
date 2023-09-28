@@ -28,6 +28,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import StreamCreator from "./StreamCreator";
+import { Types } from "aptos";
 
 enum Sort {
   MostRecent = "Most Recent",
@@ -106,16 +107,45 @@ export default function ClaimerPage() {
     /*
       TODO #5: Validate the account is defined before continuing. If not, return.
     */
+   const emptyStream = {
+      Pending: [],
+      Completed: [],
+      Active: [],
+    };
 
+    if (!account) return emptyStream;
     /* 
       TODO #6: Set the areStreamsLoading state variable to true
     */
-
+    setAreStreamsLoading(true);
     /*
       TODO #7: Make a request to the view function `get_receivers_streams` to retrieve the gifts sent by 
             the user.
     */
-
+    const payload:Types.TransactionPayload = {
+      type: "entry_function_payload",
+      function:
+        `${process.env.RESOURCE_ACCOUNT_ADDRESS}::${process.env.MODULE_NAME}::get_receivers_streams`,
+      type_arguments: [],
+      arguments: [account.address],
+    };
+  
+    let res;
+    try {
+      res = await fetch(
+        `https://fullnode.testnet.aptoslabs.com/v1/view`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      )
+    } catch (e) {
+      return emptyStream;
+    }   
     /* 
       TODO #8: Parse the response from the view request and create an object containing an array of 
             pending, completed, and active streams using the given data. Return the new object.
@@ -127,10 +157,33 @@ export default function ClaimerPage() {
         - Mark a stream as completed if the start timestamp + duration is less than the current time
         - Mark a stream as active if it is not pending or completed
     */
+    const data:Array<Array<string>> = await res.json();
+
+    const convertIndexToObject = (itemList: Array<number>):Array<Stream> => itemList.filter(i => i !== -1).map((i: number) => ({
+      sender: data[0][i],
+      recipient: account.address,
+      startTimestampMilliseconds: parseInt(data[1][i]) * 1000,
+      durationMilliseconds: parseInt(data[2][i]) * 1000,
+      amountAptFloat: parseInt(data[3][i])/100000000,
+      streamId: parseInt(data[4][i]),
+    }));
+    const pendingIndex = data[1].map<number>((item: string, index: number) => {
+      if (parseInt(item) === 0) return index;
+      return -1
+    });
+    const completedIndex = data[1].map((item: string, index: number) => {
+      if (parseInt(item) !== 0 && (parseInt(item) * 1000) + (parseInt(data[2][index]) * 1000) < Date.now()) return index;
+      return -1;
+    });
+    const activeIndex = data[0].map((_: string, index: number) => {
+      if (pendingIndex[index] === -1 && completedIndex[index] === -1) return index;
+      return -1;
+    });
+
     return {
-      Pending: [],
-      Completed: [],
-      Active: [],
+      Pending: convertIndexToObject(pendingIndex),
+      Completed: convertIndexToObject(completedIndex),
+      Active: convertIndexToObject(activeIndex),
     };
   };
 
@@ -158,6 +211,14 @@ export default function ClaimerPage() {
             </div>
           </div>
         */
+        txnInProgress && (
+          <div className="bg-neutral-900/50 backdrop-blur absolute top-0 bottom-0 left-0 right-0 z-50 m-auto flex items-center justify-center">
+            <div className="p-6 flex flex-col items-center justify-center space-y-4">
+              <BarLoader color="#10B981" />
+              <p className="text-lg font-medium">Processing Transaction</p>
+            </div>
+          </div>
+        )
       }
 
       <>
@@ -182,6 +243,16 @@ export default function ClaimerPage() {
               </AlertDescription>
             </Alert>
           */
+          connected && !isLoading && network?.name.toString() !== 'Testnet' && (
+            <Alert variant="destructive" className="w-fit mb-2 mr-2">
+            <LinkBreak2Icon className="h-4 w-4" />
+            <AlertTitle>Switch your network!</AlertTitle>
+            <AlertDescription>
+              You need to switch your network to Testnet before you can use
+              this app.
+            </AlertDescription>
+          </Alert>
+          )
         }
 
         {!isLoading &&
@@ -358,6 +429,16 @@ export default function ClaimerPage() {
                         </p>
                       </div>
                     */
+                    !isLoading && !areStreamsLoading && streams[status].length === 0 && (
+                      <div className="flex flex-col space-y-1 items-center justify-center w-full bg-neutral-400 border border-neutral-300 py-12 px-6 font-matter rounded-lg">
+                        <p className="text-2xl font-medium">
+                          No Incoming Payments
+                        </p>
+                        <p className="text-neutral-100 text-lg">
+                          You do not have any {status.toLowerCase()} payments.
+                        </p>
+                      </div>
+                    )
                   }
 
                   {
@@ -428,6 +509,62 @@ export default function ClaimerPage() {
                           })}
                       </div>
                     */
+                   !isLoading && !areStreamsLoading && (
+                    <div className="grid grid-cols-1 gap-5 xs:grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 w-full">
+                        {streams[status]
+                          .map((stream) => {
+                            return (
+                              <ReceivedStream
+                                key={stream.streamId}
+                                isTxnInProgress={txnInProgress}
+                                setTxn={setTxnInProgress}
+                                senderAddress={stream.sender}
+                                amountAptFloat={stream.amountAptFloat}
+                                durationSeconds={
+                                  stream.durationMilliseconds / 1000
+                                }
+                                startTimestampSeconds={
+                                  stream.startTimestampMilliseconds / 1000
+                                }
+                                streamId={stream.streamId}
+                              />
+                            );
+                          })
+                          .sort((a, b) => {
+                            switch (sort) {
+                              case Sort.MostRecent:
+                                // TODO: Sort streams by most recent
+                                // HINT: Use the streamId to sort the streams
+                                return a.props.streamId - b.props.streamId;
+                              case Sort.Oldest:
+                                // TODO: Sort streams by oldest
+                                // HINT: Use the streamId to sort the streams
+                                return b.props.streamId - a.props.streamId;                                ;
+                              case Sort.TotalAmountHightToLow:
+                                // TODO: Sort streams by total amount high to low
+                                return b.props.amountAptFloat - a.props.amountAptFloat;
+                              case Sort.TotalAmountLowToHigh:
+                                // TODO: Sort streams by total amount low to high
+                                return a.props.amountAptFloat - b.props.amountAptFloat;
+                              case Sort.EndDateFarToClose:
+                                // TODO: Sort streams by end date far to close
+                                return b.props.durationSeconds - a.props.durationSeconds;
+                              case Sort.EndDateCloseToFar:
+                                // TODO: Sort streams by end date close to far
+                                return a.props.durationSeconds - b.props.durationSeconds;
+                              case Sort.ClaimableAmountHighToClose:
+                                // TODO: Sort streams by claimable amount high to close
+                                return b.props.amountAptFloat - a.props.amountAptFloat;;
+                              case Sort.ClaimableAmountCloseToHigh:
+                                // TODO: Sort streams by claimable amount close to high
+                                return a.props.amountAptFloat - b.props.amountAptFloat;;;
+                              default:
+                                // TODO: Sort streams by most recent
+                                return a.props.streamId - b.props.streamId;
+                            }
+                          })}
+                      </div>
+                   )
                   }
                 </div>
               </div>

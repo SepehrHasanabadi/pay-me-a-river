@@ -20,6 +20,8 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Types } from "aptos";
+import { sleep } from "@/lib/utils";
 
 export type Stream = {
   sender: string;
@@ -48,7 +50,7 @@ export default function CreatedStreamList(props: {
   useEffect(() => {
     if (connected) {
       getSenderStreams().then((streams) => {
-        setStreams(streams);
+        setStreams(streams || []);
         setAreStreamsLoading(false);
       });
     }
@@ -61,10 +63,12 @@ export default function CreatedStreamList(props: {
     /*
       TODO #7: Validate the account is defined before continuing. If not, return.
     */
+    if (!account) return;
 
     /* 
       TODO #8: Set the isTxnInProgress state to true. This will display the loading spinner.
     */
+    props.setTxn(true);
 
     /*
       TODO #9: Make a request to the entry function `cancel_stream` to cancel the stream. 
@@ -90,10 +94,43 @@ export default function CreatedStreamList(props: {
         ),
       });
     */
+    const payload:Types.TransactionPayload = {
+      type: "entry_function_payload",
+      function:
+        `${process.env.RESOURCE_ACCOUNT_ADDRESS}::${process.env.MODULE_NAME}::cancel_stream`,
+      type_arguments: [],
+      arguments: [
+        account.address,
+        recipient
+      ]
+    };
 
+    try {
+      const result = await signAndSubmitTransaction(payload);
+      await sleep(parseInt(process.env.TRANSACTION_DELAY_MILLISECONDS || '0'))
+      toast({
+        title: "Stream closed!",
+        description: `Closed stream for ${`${recipient.slice(
+          0,
+          6
+        )}...${recipient.slice(-4)}`}`,
+        action: (
+          <a
+            href={`https://explorer.aptoslabs.com/txn/${result.hash}?network=testnet`}
+            target="_blank"
+          >
+            <ToastAction altText="View transaction">View txn</ToastAction>
+          </a>
+        ),
+      });
+    } catch (e) {
+      props.setTxn(false);
+      return;
+    }
     /*
       TODO #10: Set the isTxnInProgress state to false. This will hide the loading spinner.
     */
+   props.setTxn(false);
 
   };
 
@@ -104,12 +141,34 @@ export default function CreatedStreamList(props: {
     /*
       TODO #4: Validate the account is defined before continuing. If not, return.
     */
-
+    if (!account) return;
     /*
       TODO #5: Make a request to the view function `get_senders_streams` to retrieve the gifts sent by 
             the user.
     */
-
+    const body = {
+      function:
+        `${process.env.RESOURCE_ACCOUNT_ADDRESS}::pay_me_a_river::get_senders_streams`,
+      type_arguments: [],
+      arguments: [account.address],
+    };
+  
+    let res;
+    try {
+      res = await fetch(
+        `https://fullnode.testnet.aptoslabs.com/v1/view`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      )
+    } catch (e) {
+      return;
+    }    
     /* 
       TODO #6: Parse the response from the view request and create the gifts array using the given 
             data. Return the new gifts array.
@@ -117,8 +176,15 @@ export default function CreatedStreamList(props: {
       HINT:
         - Remember to convert the amount to floating point number
     */
-    
-    return []; // PLACEHOLDER: Remove this line
+    const data:Array<Array<string>> = await res.json();
+    return data[0].map((item: string, i: number) => ({
+      sender: account.address,
+      recipient: item,
+      startTimestampMilliseconds: parseInt(data[1][i]) * 1000,
+      durationMilliseconds: parseInt(data[2][i]) * 1000,
+      amountAptFloat: parseFloat(data[3][i])/100000000,
+      streamId: parseInt(data[4][i]),
+    }));
   };
 
   return (
@@ -171,6 +237,35 @@ export default function CreatedStreamList(props: {
                   </TableCell>
                 </TableRow>
               */
+              areStreamsLoading && (
+                <TableRow>
+                  <TableCell className="items-center">
+                    <div className="flex flex-row justify-center items-center w-full">
+                      <Skeleton className="h-4 w-4" />
+                    </div>
+                  </TableCell>
+                  <TableCell className="items-center">
+                    <div className="flex flex-row justify-center items-center w-full">
+                      <Skeleton className="h-4 w-24" />
+                    </div>
+                  </TableCell>
+                  <TableCell className="items-center">
+                    <div className="flex flex-row justify-center items-center w-full">
+                      <Skeleton className="h-4 w-24" />
+                    </div>
+                  </TableCell>
+                  <TableCell className="items-center">
+                    <div className="flex flex-row justify-center items-center w-full">
+                      <Skeleton className="h-4 w-24" />
+                    </div>
+                  </TableCell>
+                  <TableCell className="items-center">
+                    <div className="flex flex-row justify-center items-center w-full">
+                      <Skeleton className="h-8 w-12" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
             }
             {
               /* 
@@ -190,6 +285,15 @@ export default function CreatedStreamList(props: {
                   </TableCell>
                 </TableRow>
               */
+             !areStreamsLoading && streams.length === 0 && (
+                <TableRow className="hover:bg-neutral-400">
+                  <TableCell colSpan={5}>
+                    <p className="break-normal text-center font-matter py-4 text-neutral-100">
+                      You don&apos;t have any outgoing payments.
+                    </p>
+                  </TableCell>
+                </TableRow>
+              )
             }
             {
               /* 
@@ -298,6 +402,85 @@ export default function CreatedStreamList(props: {
                   </TableCell>
                 </TableRow>
               */
+              !areStreamsLoading &&
+              streams.map((stream) =>
+              <TableRow
+                  key={stream.streamId}
+                  className="font-matter hover:bg-neutral-400"
+                >
+                  <TableCell className="text-center">
+                    {stream.streamId}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger>{account?.address.slice(0, 6)}...{account?.address.slice(-4)}</TooltipTrigger>
+                        <TooltipContent>
+                          <p>{stream.recipient}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {
+                    (stream.startTimestampMilliseconds !== 0) ?
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            {new Date(stream.startTimestampMilliseconds + stream.durationMilliseconds).toLocaleDateString()}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{new Date(stream.startTimestampMilliseconds + stream.durationMilliseconds).toLocaleString()}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      :
+                      <p>
+                        <i>Stream has not started</i>
+                      </p>
+                      
+                    }
+                  </TableCell>
+                  <TableCell className="font-mono text-center">
+                    {
+                      ((stream.startTimestampMilliseconds !==0 && stream.startTimestampMilliseconds + stream.durationMilliseconds <= Date.now()) && 
+                        <p>{stream.amountAptFloat} APT</p>)
+                      || ((stream.startTimestampMilliseconds !==0 && stream.startTimestampMilliseconds + stream.durationMilliseconds > Date.now()) && 
+                      <CountUp
+                        start={stream.amountAptFloat}
+                        end={0}
+                        duration={stream.durationMilliseconds / 1000}
+                        decimals={8}
+                        decimal="."
+                        suffix=" APT"
+                        useEasing={false}
+                      />)
+                      || ((stream.startTimestampMilliseconds === 0) &&
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            {stream.amountAptFloat.toFixed(2)}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>
+                              {stream.amountAptFloat.toFixed(8)}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>)
+                    }
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Button
+                      size="sm"
+                      className="bg-red-800 hover:bg-red-700 text-white"
+                      onClick={() => cancelStream(stream.recipient)}
+                    >
+                      Cancel
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )
             }
           </TableBody>
         </Table>
